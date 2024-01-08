@@ -10,8 +10,9 @@ parser has support for a `while` with break and continue, an `if` and
 function calls. I've not built these out as I ran out of time. (when I next 
 procrastinate I might add them :D).
 
-There are _no_ python libraries used for iteration or anything. I use `sys` to
-be able to access the command line arguments.
+I use `sys` to be able to access the command line arguments, `cast` to 
+hack around pythons type system and `NoReturn` for my implementation of `panic`.
+Other than that there are no python libraries used.
 
 # Usage
 ```sh
