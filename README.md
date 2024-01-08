@@ -86,9 +86,9 @@ _main::
 - A three Address Code intermediate representation is used to flatten out the
   ast into something that is easier to convert to assembly
 
-## x86
-- A semi-realistic intel style assembly, I'm not too bothered that it doesn't
-  run, it's fairly boring to sort that out so I've not done it.
+## x86_64
+- A semi-realistic intel style assembly, I'm not too worried that the x86_64
+  may not run, it's out side of the scope of this project.
 
 # Inspirations & Resources
 - [Compiler design in c](https://holub.com/compiler/)
