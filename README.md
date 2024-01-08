@@ -100,7 +100,6 @@ _main::
 - [TempleOS](https://templeos.org/)
 - [JS c compiler](https://github.com/Captainarash/CaptCC)
 
-*Taking a weekend
-I'm building a more _real_ compiler in c for my masters and having been building
-a more _real_ compiler in `c`. There's months of learning crammed into these 
-rather shoddy ~900 of code.
+*Taking a weekend -
+I'm building a more _real_ compiler in `c` for my masters. There's months of 
+learning crammed into these rather shoddy ~900 of code.
