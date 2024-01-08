@@ -101,6 +101,10 @@ _main::
 - [TempleOS](https://templeos.org/)
 - [JS c compiler](https://github.com/Captainarash/CaptCC)
 
+## Twitch
+I semi-frequently stream on twitch at: https://twitch.tv/Jamesbarford mostly
+c and mostly compiler related.
+
 *Taking a weekend -
 I'm building a more _real_ compiler in `c` for my masters. There's months of 
 learning crammed into these rather shoddy ~900 of code.
