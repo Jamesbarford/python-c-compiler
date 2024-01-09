@@ -6,27 +6,47 @@ def panic(argv) -> NoReturn:
     print(f"ERROR: {argv}")
     exit(1)
 
+OP_BIT_XOR = ord("^")
+OP_BIT_AND = ord("&")
+OP_BIT_OR = ord("|")
+OP_BIT_NOT = ord("~")
+OP_NOT = ord("!")
 OP_PLUS = ord("+")
 OP_SUB = ord("-")
 OP_MUL = ord("*")
 OP_DIV = ord("/")
 OP_LT = ord("<")
 OP_GT = ord(">")
-OP_SHL = 0x20
-OP_SHR = 0x21
-OP_LEQ = 0x22
-OP_GEQ = 0x23
-OP_EQ = 0x24
+OP_SHL = 0x200
+OP_SHR = 0x201
+OP_LEQ = 0x202
+OP_GEQ = 0x203
+OP_EQ = 0x204
+OP_LOG_OR = 0x205
+OP_LOG_AND = 0x206
+OP_N_EQ = 0x206
+OP_ARROW = 0x207
+OP_PRE_PLUS_PLUS= 0x208
+OP_PRE_MINUS_MINUS  = 0x209
 
 op_to_alu = { OP_SHR: "SHR",OP_SHL: "SHL",OP_MUL: "MUL", OP_PLUS: "ADD", OP_SUB: "SUB", OP_DIV: "DIV",
-             OP_LT: "LE", OP_GT: "GE", OP_LEQ: "LEQ", OP_GEQ: ">=", OP_EQ: "=="}
+             OP_LT: "LE", OP_GT: "GE", OP_LEQ: "LEQ", OP_GEQ: "GEQ", OP_EQ: "EQ", OP_LOG_OR: "LOG_OR",
+             OP_LOG_AND: "LOG_AND", OP_BIT_OR: "OR", OP_BIT_XOR: "XOR", OP_LOG_AND: "AND",
+             OP_BIT_NOT: "BIT_NOT", OP_N_EQ: "N_EQ", OP_ARROW: "DEREF", OP_NOT: "NOT",
+             OP_PRE_PLUS_PLUS: "PRE_INCR", OP_PRE_MINUS_MINUS: "PRE_DECR",}
 
 op_to_str = { OP_SHR: ">>",OP_SHL: "<<",OP_MUL: "*", OP_PLUS: "+", OP_SUB: "-", OP_DIV: "/",
-             OP_LT: "<", OP_GT: ">", OP_LEQ: "<=", OP_GEQ: ">=", OP_EQ: "==" }
+             OP_LT: "<", OP_GT: ">", OP_LEQ: "<=", OP_GEQ: ">=", OP_EQ: "==", OP_LOG_OR: "||",
+             OP_LOG_AND: "&&", OP_BIT_OR: "|", OP_BIT_XOR: "^", OP_LOG_AND: "&&", OP_BIT_NOT: "~",
+             OP_N_EQ: "!=", OP_ARROW: "->", OP_NOT: "!", OP_PRE_MINUS_MINUS: "--", OP_PRE_PLUS_PLUS: "++"}
 
 str_to_op = {
     ">>": OP_SHR, "<<": OP_SHL, "+": OP_PLUS, "-": OP_SUB, "*": OP_MUL, "/": OP_DIV,
-    "<": OP_LT, ">": OP_GT, "<=": OP_LEQ, ">=": OP_GEQ, "==": OP_EQ}
+    "<": OP_LT, ">": OP_GT, "<=": OP_LEQ, ">=": OP_GEQ, "==": OP_EQ, "||": OP_LOG_OR,
+    "&&": OP_LOG_AND, "|": OP_BIT_OR, "&": OP_BIT_AND, OP_BIT_XOR: "^", OP_LOG_AND: "&",
+    "~": OP_BIT_NOT, "!=": OP_N_EQ, "->": OP_ARROW, "!": OP_NOT, "--": OP_PRE_MINUS_MINUS,
+    "++": OP_PRE_PLUS_PLUS
+}
 
 TK_IDENT = 0
 TK_PUNCT = 1
@@ -35,7 +55,6 @@ TK_IDENT = 3
 TK_I64 = 4
 TK_F64 = 5
 keywords = {"void","int","long","while","break","return","continue","if","else"}
-mult_tk = {"<<",">>","++","--","->","=="}
 
 class Token:
     def __init__(self, kind: int, lineno: int) -> None:
@@ -170,6 +189,8 @@ AST_BREAK = 9
 AST_CONTINUE = 10
 AST_WHILE = 11
 AST_IF = 12
+AST_ADDR = 13
+AST_DREF = 14
 
 class AstType:
     def __init__(self, size: int, kind: int = 0, ptr = None) -> None:
@@ -192,6 +213,8 @@ class AstType:
         elif self.kind == AST_CONTINUE: return "continue"
         elif self.kind == AST_WHILE: return "while"
         elif self.kind == AST_IF: return "if"
+        elif self.kind == AST_ADDR: return "addr"
+        elif self.kind == AST_DREF: return "deref"
         else: return "unknown"
 
 ast_type_i32 = AstType(size=4, kind=AST_INT)
@@ -201,6 +224,9 @@ ast_type_f64 = AstType(size=8, kind=AST_FLOAT)
 class AstTypePtr(AstType):
     def __init__(self, base: AstType) -> None:
         super().__init__(8,AST_PTR,base)
+
+def make_ast_ptr(ast_type: AstType) -> AstType:
+    return AstType(8,AST_PTR,ast_type)
 
 class Ast:
     kind: int
@@ -324,7 +350,16 @@ class AstLabel(Ast):
         super().__init__(None)
         self.label = label
     def __str__(self) -> str:
-        return "f<label> {self.label}"
+        return f"<label> {self.label}"
+
+class AstUnary(Ast):
+    def __init__(self, op: int, ast_type: AstType, operand: Ast) -> None:
+        super().__init__(ast_type)
+        self.kind = op
+        self.type = ast_type
+        self.operand = operand
+    def __str__(self) -> str:
+        return f"<unary> {self.operand} {self.kind} {self.operand}"
 
 # I've just made this up
 def get_priority(tok: TokenPunct) -> int:
@@ -346,6 +381,16 @@ def create_label():
 def create_function_label(fname: str) -> str:
     return f"{create_label}_{fname}"
 
+def convert_arithmetic(t1: AstType, t2: AstType):
+    if t1.kind < t2.kind:
+        tmp = t1
+        t1 = t2
+        t2 = tmp
+    if t1.kind == AST_FLOAT: return t1
+    if t1.size > t2.size: return t1
+    return t1
+
+
 class Parser:
     def __init__(self, tokens: list[Token]) -> None:
         self.tokens = tokens
@@ -358,6 +403,7 @@ class Parser:
         self.tmp_ret_type: AstType
         self.tmp_loop_end: str | None
         self.tmp_loop_begin: str | None
+        self.lineno = 1
 
     def get_type(self,name:str) -> AstType:
         if (val := self.types.get(name)) is not None: return val
@@ -367,21 +413,26 @@ class Parser:
 
     def is_punct_match(self,tok: Token | None, punct: str) -> bool: return isinstance(tok,TokenPunct) and tok.punct == punct
 
-    def rewind(self) -> None: self.ptr -= 1
+    def rewind(self) -> None:
+        self.ptr -= 1
+        self.lineno = self.tokens[self.ptr].lineno
 
-    def peek(self) -> Token | None: return None if self.ptr == self.tokens_len else self.tokens[self.ptr]
-
-    def get_next(self) -> Token | None:
+    def peek(self) -> Token | None:
         if self.ptr == self.tokens_len:
             return None
         tok = self.tokens[self.ptr]
+        self.lineno = tok.lineno
+        return tok
+
+    def get_next(self) -> Token | None:
+        tok = self.peek()
         self.ptr += 1
         return tok
 
     def expect_tok_next(self, expected: str) -> bool:
         tok = self.get_next()
         if isinstance(tok, TokenPunct) and tok.punct == expected: return True
-        if tok: panic(f"Parser error: Missmatched characters: {tok} != {expected} at line: {tok.lineno}")
+        if tok: panic(f"Parser error: Missmatched characters: {tok} != {expected} at line: {self.lineno}")
         else: panic(f"Parser error: expected {expected} ran out of input")
 
     def env_get(self, name: str) -> Ast | None:
@@ -452,6 +503,109 @@ class Parser:
             if rhs is None: panic(f"lefthand lvar missing right hand value at line: {tok.lineno}")
 
             lhs = AstBinaryOp(ast_type_i64,lhs,str_to_op[tok.punct],rhs)
+
+
+    def parse_mul(self): pass
+    def parse_add(self): pass
+    def parse_shift(self):pass
+    def parse_comparison(self): pass
+    def parse_equality_expr(self): pass
+    def parse_bitwise_or(self): pass
+    def parse_bitwise_and(self): pass
+    def parse_log_or(self): pass
+    def parse_log_and(self): pass
+    def precidence_climb(self): pass
+
+
+    def parse_end_postfix(self, ast: Ast) -> Ast:
+        while 1:
+            tok = self.peek()
+            if self.is_punct_match(tok,'('):
+                panic(f"function pointers not implmented at line: {self.lineno}")
+            elif self.is_punct_match(tok,'['):
+                panic(f"arrays not implmented at line: {self.lineno}")
+            elif self.is_punct_match(tok,'.'):
+                panic(f"structs not implmented at line: {self.lineno}")
+            elif self.is_punct_match(tok, "->"):
+                panic(f"structs not implmented at line: {self.lineno}")
+            elif self.is_punct_match(tok, "++"):
+                return AstUnary(OP_PRE_PLUS_PLUS, cast(AstType,ast.type), ast)
+            elif self.is_punct_match(tok, "--"):
+                return AstUnary(OP_PRE_PLUS_PLUS, cast(AstType,ast.type), ast)
+            return ast
+        return ast
+
+    def parse_postfix(self) -> Ast:
+        ast = self.parse_primary()
+        return self.parse_end_postfix(cast(Ast,ast))
+
+    def parse_unary_incr_decr(self, op: int) -> Ast:
+        ast = self.parse_unary()
+        return AstUnary(op,cast(AstType,ast.type),ast)
+
+    def parse_unary_addr(self) -> Ast:
+        ast = self.parse_cast_expr()
+        t = cast(AstType,ast)
+        if not t or t.kind != AST_PTR:
+            panic(f"Pointer expected got: {ast}")
+        return AstUnary(AST_ADDR,make_ast_ptr(t),ast)
+
+    def parse_unary_deref(self) -> Ast:
+        ast = self.parse_cast_expr()
+        t = cast(AstType,ast)
+        if not t or t.kind != AST_PTR:
+            panic(f"Pointer expected got: {ast}")
+        return AstUnary(AST_DREF,cast(AstType,t.ptr),ast)
+
+    def parse_unary_minus(self) -> Ast:
+        ast = self.parse_cast_expr()
+        return AstUnary(OP_SUB,ast_type_i64,ast)
+
+    def parse_unary_bit_not(self) -> Ast:
+        ast = self.parse_cast_expr()
+        return AstUnary(OP_NOT,ast_type_i64,ast)
+
+    def parse_unary_log_not(self) -> Ast:
+        ast = self.parse_cast_expr()
+        return AstUnary(OP_NOT,cast(AstType,ast.type),ast)
+
+    def parse_unary(self) -> Ast:
+        tok = self.get_next()
+        if isinstance(tok,TokenPunct):
+            if   tok.punct == '&': return self.parse_unary_addr()
+            elif tok.punct == '*': return self.parse_unary_deref()
+            elif tok.punct == '+': return self.parse_cast_expr()
+            elif tok.punct == '-': return self.parse_unary_minus()
+            elif tok.punct == '~': return self.parse_unary_bit_not()
+            elif tok.punct == '!': return self.parse_unary_log_not()
+            else:
+                self.rewind()
+                return self.parse_postfix()
+        else:
+            self.rewind()
+            return self.parse_postfix()
+
+    def parse_cast_expr(self) -> Ast:
+        tok = self.get_next()
+        if self.is_punct_match(tok,'('):
+            panic(f"Type casting not implemented {tok}")
+        return self.parse_unary()
+
+
+    def parse_binop(self, op: int, lhs: Ast, rhs: Ast) -> Ast:
+        l_type = cast(AstType,lhs.type)
+        r_type = cast(AstType,rhs.type)
+        if l_type.kind == AST_PTR and r_type.kind == AST_PTR:
+            if not op in {OP_SUB,OP_PLUS,OP_LT,OP_GT,OP_EQ,OP_LEQ,OP_GEQ}:
+                panic("not valid pointer arithmetic")
+            if op == OP_SUB:
+                return AstBinaryOp(ast_type_i64,lhs,op,rhs)
+        elif l_type == AST_PTR:
+            return AstBinaryOp(l_type,lhs,op,rhs)
+        elif r_type == AST_PTR:
+            return AstBinaryOp(r_type,lhs,op,rhs)
+        new_type = convert_arithmetic(l_type,r_type)
+        return AstBinaryOp(new_type,lhs,op,rhs)
 
     def parse_declaration_initialiser(self, var: Ast, terminators: set[str]) -> None | Ast:
         tok = self.get_next()
