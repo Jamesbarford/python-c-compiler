@@ -10,12 +10,23 @@ OP_PLUS = ord("+")
 OP_SUB = ord("-")
 OP_MUL = ord("*")
 OP_DIV = ord("/")
+OP_LT = ord("<")
+OP_GT = ord(">")
 OP_SHL = 0x20
 OP_SHR = 0x21
+OP_LEQ = 0x22
+OP_GEQ = 0x23
+OP_EQ = 0x24
 
-op_to_alu = { OP_SHR: "SHR",OP_SHL: "SHL",OP_MUL: "MUL", OP_PLUS: "ADD", OP_SUB: "SUB", OP_DIV: "DIV" }
-op_to_str = { OP_SHR: ">>",OP_SHL: "<<",OP_MUL: "*", OP_PLUS: "+", OP_SUB: "-", OP_DIV: "/" }
-str_to_op = {">>": OP_SHR, "<<": OP_SHL, "+": OP_PLUS, "-": OP_SUB, "*": OP_MUL, "/": OP_DIV}
+op_to_alu = { OP_SHR: "SHR",OP_SHL: "SHL",OP_MUL: "MUL", OP_PLUS: "ADD", OP_SUB: "SUB", OP_DIV: "DIV",
+             OP_LT: "LE", OP_GT: "GE", OP_LEQ: "LEQ", OP_GEQ: ">=", OP_EQ: "=="}
+
+op_to_str = { OP_SHR: ">>",OP_SHL: "<<",OP_MUL: "*", OP_PLUS: "+", OP_SUB: "-", OP_DIV: "/",
+             OP_LT: "<", OP_GT: ">", OP_LEQ: "<=", OP_GEQ: ">=", OP_EQ: "==" }
+
+str_to_op = {
+    ">>": OP_SHR, "<<": OP_SHL, "+": OP_PLUS, "-": OP_SUB, "*": OP_MUL, "/": OP_DIV,
+    "<": OP_LT, ">": OP_GT, "<=": OP_LEQ, ">=": OP_GEQ, "==": OP_EQ}
 
 TK_IDENT = 0
 TK_PUNCT = 1
@@ -116,15 +127,23 @@ def lexc(code: str) -> list[Token]:
             else: tokens.append(TokenI64(int(num),lexer.lineno))
         elif ch in {"+","-","*","/",";","{","}","(",")"}: tokens.append(TokenPunct(ch,lexer.lineno))
         elif ch == '>':
-            if lexer.peek() == '>':
+            peek = lexer.peek()
+            if peek == '>':
                 lexer.get_next()
                 tokens.append(TokenPunct(">>",lexer.lineno))
+            elif peek == '=':
+                lexer.get_next()
+                tokens.append(TokenPunct(">=",lexer.lineno))
             else:
                 tokens.append(TokenPunct(ch,lexer.lineno))
         elif ch == '<':
-            if lexer.peek() == '<':
+            peek = lexer.peek()
+            if peek == '<':
                 lexer.get_next()
                 tokens.append(TokenPunct("<<",lexer.lineno))
+            elif peek == '=':
+                lexer.get_next()
+                tokens.append(TokenPunct(">=",lexer.lineno))
             else:
                 tokens.append(TokenPunct(ch,lexer.lineno))
         elif ch == '=':
@@ -277,6 +296,8 @@ class AstWhile(Ast):
         self.body = body
         self.begin_label = begin_label
         self.end_label = end_label
+    def __str__(self) -> str:
+        return f"<while> {self.cond} {self.body}"
 
 class AstBreak(Ast):
     def __init__(self,label: str) -> None:
@@ -298,6 +319,13 @@ class AstIf(Ast):
         self.then = then
         self.els = els
 
+class AstLabel(Ast):
+    def __init__(self, label: str) -> None:
+        super().__init__(None)
+        self.label = label
+    def __str__(self) -> str:
+        return "f<label> {self.label}"
+
 # I've just made this up
 def get_priority(tok: TokenPunct) -> int:
     if tok.punct in {'[','.','->'}: return 1
@@ -306,7 +334,7 @@ def get_priority(tok: TokenPunct) -> int:
     elif tok.punct == '+': return 4
     elif tok.punct == '-': return 5
     elif tok.punct in {'&','|','>>','<<'}: return 6
-    elif tok.punct == '==': return 7
+    elif tok.punct in {'==', '>=','<=', '<', '>'}: return 7
     else: return -1
 
 label_count = 1
@@ -315,12 +343,14 @@ def create_label():
     label_count += 1
     return f".L{label_count}"
 
+def create_function_label(fname: str) -> str:
+    return f"{create_label}_{fname}"
+
 class Parser:
     def __init__(self, tokens: list[Token]) -> None:
         self.tokens = tokens
         self.tokens_len = len(tokens)
         self.ptr = 0
-        self.env: dict = {}
         self.types = {"int": ast_type_i64, "long": ast_type_i32, "float": ast_type_f64}
         self.tmp_env: dict = {}
         self.tmp_func: AstFunction
@@ -452,7 +482,6 @@ class Parser:
                 self.rewind()
                 return AstIf(cond,then,None)
             elif tok.ident == "return":
-                print("here")
                 retval = self.parse_expr()
                 self.expect_tok_next(';')
                 return AstReturn(self.tmp_ret_type,retval)
@@ -462,6 +491,7 @@ class Parser:
                 self.tmp_loop_end = while_end
                 self.tmp_loop_begin = while_begin
                 self.tmp_env = {"parent": self.tmp_env}
+                self.expect_tok_next('(')
                 while_cond = self.parse_expr(16)
                 self.expect_tok_next(')')
                 while_body = self.parse_statement()
@@ -475,10 +505,27 @@ class Parser:
             elif tok.ident == "continue":
                 if self.tmp_loop_begin is None: panic(f"Floating 'continue' statement at line: {tok.lineno}")
                 return AstContinue(self.tmp_loop_begin)
+        else:
+            peek = self.peek()
+            if isinstance(peek,TokenIdent) and isinstance(peek,TokenPunct) and peek.punct == ':':
+                label = create_function_label(self.tmp_func.fname)
+                ast = AstLabel(label)
+                self.expect_tok_next(':')
+                return ast
+            if self.is_punct_match(tok,'{'): return self.parse_compound()
+            self.rewind()
+            ast = self.parse_expr()
+            tok = self.get_next()
+            if isinstance(tok,TokenPunct) and \
+                    (tok.punct != ';' or tok.punct != ','):
+                panic(f"Expected a ',' or ';' at line: {tok.lineno} got {tok}")
+            elif tok and not isinstance(tok,TokenPunct):
+                panic(f"Expected a ',' or ';' at line: {tok.lineno} got {tok}")
+            return ast
 
     def parse_compound(self) -> Ast:
         statements = []
-        self.tmp_env = {"parent": self.env}
+        self.tmp_env = {"parent": self.tmp_env}
         tok = self.peek()
         while tok and not self.is_punct_match(tok,'}'):
             if self.is_type(tok):
@@ -542,7 +589,7 @@ class Parser:
 
     def parse_function(self, ret_type: AstType, tok_ident: TokenIdent) -> Ast:
         self.tmp_env = {
-            "parent": self.env
+            "parent": self.tmp_env
         }
         self.tmp_locals = []
         self.tmp_ret_type = ret_type
@@ -574,25 +621,13 @@ class Parser:
 
 ## TAC =======================
 # Three Adress Code IR START
-TAC_NULL = -1
-TAC_REG = 0
-TAC_ALU = 1
-TAC_INT = 2
-TAC_FLOAT = 3
-TAC_BINOP = 4
-TAC_LIST = 5
-TAC_FUNC = 6
-TAC_SAVE = 7
-TAC_LOAD = 8
-TAC_RETURN = 9
-
 class TACNode:
-    def __init__(self, kind: int) -> None:
-        self.kind = kind
+    def __init__(self) -> None:
+        pass
 
 class TAClist(TACNode):
     def __init__(self, tac_list: list[TACNode]) -> None:
-        super().__init__(TAC_LIST)
+        super().__init__()
         self.tac_list = tac_list
     def __str__(self) -> str:
         buf = ""
@@ -602,49 +637,43 @@ class TAClist(TACNode):
 
 class TACNull(TACNode):
     def __init__(self) -> None:
-        super().__init__(TAC_NULL)
+        super().__init__()
     def __str__(self) -> str: return "NULL"
 
 class TACInt(TACNode):
     def __init__(self, num: int, size: int) -> None:
-        super().__init__(TAC_INT)
+        super().__init__()
         self.num = num
         self.size = size
     def __str__(self) -> str: return str(f"@i{self.size*8}::{self.num}")
 
 class TACFloat(TACNode):
     def __init__(self, num: float, size: int) -> None:
-        super().__init__(TAC_FLOAT)
+        super().__init__()
         self.num = num
         self.size = size
     def __str__(self) -> str: return str(f"@f{self.size*8}::{self.num}")
 
 class TACReg(TACNode):
     def __init__(self, reg: int) -> None:
-        super().__init__(TAC_REG)
+        super().__init__()
         self.reg = reg
     def __str__(self) -> str: return str(f"R{self.reg}")
 
-class TACAlu(TACNode):
-    def __init__(self, alu: int) -> None:
-        super().__init__(TAC_ALU)
-        self.alu = alu
-    def __str__(self) -> str: return f"{op_to_alu[self.alu]}"
-
 class TACBinOp(TACNode):
-    def __init__(self, alu: TACNode, op1: TACNode, op2: TACNode, result: TACNode) -> None:
-        super().__init__(TAC_BINOP)
+    def __init__(self, alu: int, op1: TACNode, op2: TACNode, result: TACNode) -> None:
+        super().__init__()
         self.alu = alu
         self.op1 = op1
         self.op2 = op2
         self.result = result
     def __str__(self) -> str:
         # weird; kinda TAC, kinda ASM o7
-        return f"{self.result} = {self.alu} {self.op1}, {self.op2}"
+        return f"{self.result} = {op_to_alu[self.alu]} {self.op1}, {self.op2}"
 
 class TACFunc(TACNode):
     def __init__(self, name: str, body: TACNode, local_vars: list[Ast], params: list[Ast]):
-        super().__init__(TAC_FUNC)
+        super().__init__()
         self.name = name
         self.locals = local_vars
         self.body = body
@@ -653,7 +682,7 @@ class TACFunc(TACNode):
 
 class TACSave(TACNode):
     def __init__(self, variable: Ast, init: TACNode | None, reg: TACNode) -> None:
-        super().__init__(TAC_SAVE)
+        super().__init__()
         self.var = variable
         self.init = init
         self.reg = reg
@@ -662,17 +691,51 @@ class TACSave(TACNode):
 
 class TACLoad(TACNode):
     def __init__(self, variable: Ast, reg: TACNode) -> None:
-        super().__init__(TAC_LOAD)
+        super().__init__()
         self.var = variable
         self.reg = reg
     def __str__(self) -> str: return f"{self.reg}"
 
 class TACReturn(TACNode):
     def __init__(self, reg: TACReg, expr: Ast|None) -> None:
-        super().__init__(TAC_RETURN)
+        super().__init__()
         self.reg = reg
         self.expr = expr
     def __str__(self) -> str: return f"RET {self.reg}"
+
+class TACLabel(TACNode):
+    def __init__(self, label: str) -> None:
+        super().__init__()
+        self.label = label
+    def __str__(self) -> str:
+        return f"{self.label}:"
+
+class TACJump(TACNode):
+    def __init__(self, label: str) -> None:
+        super().__init__()
+        self.label = label
+    def __str__(self) -> str:
+        return f"JUMP {self.label}"
+
+class TACJumpEq(TACNode):
+    def __init__(self, label: str) -> None:
+        super().__init__()
+        self.label = label
+    def __str__(self) -> str:
+        return f"JUMP EQ {self.label}"
+
+class TACJumpNeq(TACNode):
+    def __init__(self, label: str) -> None:
+        super().__init__()
+        self.label = label
+    def __str__(self) -> str:
+        return f"JUMP NEQ {self.label}"
+
+class TACTest(TACNode):
+    def __init__(self) -> None:
+        pass
+    def __str__(self) -> str:
+        return f"TEST 0"
 
 class Register:
     __reg: int = 0
@@ -722,6 +785,31 @@ def ir_return(ir: IR, ast: AstReturn) -> TACNode:
     ir.ops.append(ret)
     return ret
 
+def ir_binop(ir: IR, ast: Ast) -> TACNode:
+    binop = cast(AstBinaryOp,ast)
+    return TACBinOp(
+        ast.kind,
+        ir_expr(ir,binop.left),
+        ir_expr(ir,binop.right),
+        Register.get_next())
+
+def ir_while(ir: IR, ast: AstWhile) -> TACNode:
+    begin_label = TACLabel(ast.begin_label)
+    end_label = TACLabel(ast.end_label)
+    jump_begin = TACJumpEq(ast.begin_label)
+    jump_end = TACJump(ast.end_label)
+    test_cond = TACTest()
+
+    ir.ops.append(begin_label)
+    ir_expr(ir,ast.cond)
+    ir.ops.append(test_cond)
+    ir.ops.append(jump_end)
+    ir_expr(ir,ast.body)
+    ir.ops.append(jump_begin)
+    ir.ops.append(end_label)
+
+    return TACNull()
+
 def ir_expr(ir: IR, ast: Ast | None) -> TACNode:
     if ast is None: return TACNull()
     if isinstance(ast,AstI32) or \
@@ -733,6 +821,7 @@ def ir_expr(ir: IR, ast: Ast | None) -> TACNode:
             load = ir_load(ir,ast)
             return load
     elif isinstance(ast,AstReturn): return ir_return(ir,ast)
+    elif isinstance(ast,AstWhile): return ir_while(ir,ast)
     elif isinstance(ast,AstFunction):
         body = ir_compound(ir,ast.body.stmts)
         return TACFunc(ast.fname,body,ast.locals,ast.params)
@@ -742,14 +831,6 @@ def ir_expr(ir: IR, ast: Ast | None) -> TACNode:
         return quad.result
     else: panic(f"kind: {ast} not handled")
 
-def ir_binop(ir: IR, ast: Ast) -> TACNode:
-    binop = cast(AstBinaryOp,ast)
-    return TACBinOp(
-        TACAlu(ast.kind),
-        ir_expr(ir,binop.left),
-        ir_expr(ir,binop.right),
-        Register.get_next())
-
 def ir_gen(funcs: list[Ast]) -> list[TACNode]:
     ir_funcs = []
     for func in funcs:
@@ -757,7 +838,6 @@ def ir_gen(funcs: list[Ast]) -> list[TACNode]:
         ir = IR()
         ir_fn = ir_expr(ir,func)
         cast(TACFunc,ir_fn).body = TAClist(ir.ops)
-        #print(ir.ops)
         ir_funcs.append(ir_fn)
     return ir_funcs
 
@@ -766,28 +846,38 @@ x86_registers = ["RDI","RSI","RDX","RCX","R8","R9","R10","R11","R12","R13","R14"
 def x86(ops: list[TACNode], stack_space: int) -> str:
     x86_code = []
     for op in ops:
-        if isinstance(op,TACReturn):
+        if isinstance(op,TACJump): x86_code.append(f"JMP\t{op.label}\n\t")
+        elif isinstance(op,TACJumpNeq): x86_code.append(f"JNE\t{op.label}\n\t")
+        elif isinstance(op,TACJumpEq):  x86_code.append(f"JE\t{op.label}\n\t")
+        elif isinstance(op,TACTest):  x86_code.append(f"TEST\tRAX, RAX\n\t")
+        elif isinstance(op,TACLabel):
+            x86_code[-1] = x86_code[-1][:-1]
+            x86_code.append(f"{op.label}:\n\t")
+        elif isinstance(op,TACReturn):
             if stack_space > 0:
                 x86_code.append(f"ADD\tRSP, {stack_space}\n\t")
             if op.expr:
-                x86_code.append(f"MOVQ\tRAX, {op.expr.offset}[RBP]\n\t")
+                if isinstance(op.expr,AstI64):
+                    x86_code.append(f"MOVQ\tRAX, {op.expr}\n\t")
+                elif op.expr is not None:
+                    x86_code.append(f"MOVQ\tRAX, {op.expr.offset}[RBP]\n\t")
             x86_code.append(f"LEAVE\n\tRET\n\n")
-        if isinstance(op,TACSave):
+        elif isinstance(op,TACSave):
             if isinstance(op.init,TACInt):
                 x86_code.append(f"MOVQ\t{op.var.offset}[RBP], {op.init.num}\n\t")
             else:
                 x86_code.append(f"MOVQ\t{op.var.offset}[RBP], RAX\n\t")
-        if isinstance(op,TACBinOp):
+        elif isinstance(op,TACBinOp):
             binop = cast(TACBinOp,op)
-            alu = cast(TACAlu, binop.alu)
-            mnemonic = op_to_alu[alu.alu]
+            alu = binop.alu
+            mnemonic = op_to_alu[alu]
             # XXX: optimiser would nuke this as it is a constant expression
             if isinstance(binop.op1,TACInt) and isinstance(binop.op2,TACInt):
                 x86_code.append(f"MOVQ\tRAX, {binop.op1.num}\n\t")
                 x86_code.append(f"MOVQ\tRCX, {binop.op2.num}\n\t")
                 x86_code.append(f"{mnemonic}\tRAX, RCX\n\t")
             elif isinstance(binop.op1,TACLoad) and isinstance(binop.op2,TACInt):
-                if alu.alu == OP_SHL or alu.alu == OP_SHR:
+                if alu == OP_SHL or alu == OP_SHR:
                     x86_code.append(f"{mnemonic}\tAL, {binop.op2.num}\n\t")
                 else:
                     x86_code.append(f"MOVQ\tRCX, {binop.op2.num}\n\t")
